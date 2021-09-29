@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"errors"
 	"flag"
 	"fmt"
@@ -12,6 +13,7 @@ import (
 	"strconv"
 	"strings"
 	"syscall"
+	"text/tabwriter"
 	"time"
 
 	"github.com/bwmarrin/discordgo"
@@ -161,13 +163,16 @@ func ListHistory() string {
 	sort.Slice(History, func(i, j int) bool {
 		return History[i].balance > History[j].balance
 	})
-	var b strings.Builder
-	b.WriteString("```")
-	b.WriteString("Name					Amount\n")
+	var b bytes.Buffer
+	w := tabwriter.NewWriter(&b, 0, 8, 1, '\t', 0)
+	fmt.Fprintf(w, "```\n")
+	fmt.Fprintf(w, "%s\t%s\n", "Name", "Amount")
 	for _, e := range History {
-		fmt.Fprintf(&b, "%s					%v\n", e.Member.User.Username, e.balance)
+		fmt.Fprintf(w, "%s\t%v\n", e.Member.User.Username, e.balance)
 	}
-	b.WriteString("```")
+	fmt.Fprintf(w, "```")
+	w.Flush()
+	fmt.Println(b.String())
 	return b.String()
 }
 
