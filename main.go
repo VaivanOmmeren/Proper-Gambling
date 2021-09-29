@@ -19,7 +19,7 @@ import (
 
 type HistoricalData struct {
 	Member  *discordgo.Member
-	balance int
+	balance int64
 }
 
 type Participant struct {
@@ -54,7 +54,13 @@ type GamblingGame struct {
 	closed          bool
 	lowestRoll      Participant
 	highestRoll     Participant
-	winner          *discordgo.Member
+	Result          GameResult
+}
+
+type GameResult struct {
+	Winner  *discordgo.Member
+	Loser   *discordgo.Member
+	Balance int64
 }
 
 // Variables used for command line parameters
@@ -71,7 +77,7 @@ var (
 	activeGame GamblingGame
 	table      Table
 	tableTitle string
-	History    HistoricalData
+	History    []HistoricalData
 )
 
 var (
@@ -87,6 +93,10 @@ var (
 					Required:    false,
 				},
 			},
+		},
+		{
+			Name:        "history",
+			Description: "Lists the currently known gambling standings",
 		},
 	}
 	commandHandlers = map[string]func(s *discordgo.Session, i *discordgo.InteractionCreate){
@@ -136,8 +146,30 @@ var (
 				}
 			}
 		},
+		"history": func(s *discordgo.Session, i *discordgo.InteractionCreate) {
+			s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
+				Type: discordgo.InteractionResponseChannelMessageWithSource,
+				Data: &discordgo.InteractionResponseData{
+					Content: ListHistory(),
+				},
+			})
+		},
 	}
 )
+
+func ListHistory() string {
+	sort.Slice(History, func(i, j int) bool {
+		return History[i].balance > History[j].balance
+	})
+	var b strings.Builder
+	b.WriteString("```")
+	b.WriteString("Name					Amount\n")
+	for _, e := range History {
+		fmt.Fprintf(&b, "%s					%v\n", e.Member.User.Username, e.balance)
+	}
+	b.WriteString("```")
+	return b.String()
+}
 
 func init() {
 	flag.StringVar(&Token, "t", "", "Bot Token")
@@ -148,7 +180,7 @@ func init() {
 func main() {
 
 	rand.Seed(time.Now().UnixNano())
-	History = HistoricalData{}
+	History = []HistoricalData{}
 	// Create a new Discord session using the provided bot token.
 	s, err := discordgo.New("Bot " + Token)
 	if err != nil {
@@ -248,6 +280,35 @@ func handleReactions(s *discordgo.Session, r *discordgo.MessageReactionAdd) {
 	}
 }
 
+func UpdateHistory() {
+	UpdateHistoryForUser(activeGame.Result.Winner, activeGame.Result.Balance)
+	UpdateHistoryForUser(activeGame.Result.Loser, -activeGame.Result.Balance)
+	fmt.Println("history updated?")
+	fmt.Println(History)
+}
+
+func UpdateHistoryForUser(m *discordgo.Member, amount int64) {
+	userData := getHistoryForUser(m)
+	userData.UpdateBalance(amount)
+	fmt.Print("userdata after maths", userData)
+}
+
+func (u *HistoricalData) UpdateBalance(amount int64) {
+	u.balance = u.balance + amount
+}
+
+func getHistoryForUser(m *discordgo.Member) *HistoricalData {
+	for i, e := range History {
+		if e.Member.User.ID == m.User.ID {
+			return &History[i]
+		}
+	}
+
+	newHistory := HistoricalData{Member: m}
+	History = append(History, newHistory)
+	return &History[len(History)-1]
+}
+
 func handleRoll(p *Participant) {
 	roll := rand.Intn(int(activeGame.amount))
 	p.Roll = int64(roll)
@@ -261,10 +322,10 @@ func handleRoll(p *Participant) {
 
 func endGame(s *discordgo.Session) {
 	if activeGame.highestRoll.Member.User.ID != activeGame.lowestRoll.Member.User.ID {
-		activeGame.winner = activeGame.highestRoll.Member
-		payout := activeGame.highestRoll.Roll - activeGame.lowestRoll.Roll
+		activeGame.Result = GameResult{Winner: activeGame.highestRoll.Member, Loser: activeGame.lowestRoll.Member, Balance: activeGame.highestRoll.Roll - activeGame.lowestRoll.Roll}
 
-		s.ChannelMessageSend(activeGame.ChannelID, fmt.Sprintf("<@%s> needs to pay <@%s> %dg for this game!", activeGame.lowestRoll.Member.User.ID, activeGame.winner.User.ID, payout))
+		s.ChannelMessageSend(activeGame.ChannelID, fmt.Sprintf("<@%s> needs to pay <@%s> %dg for this game!", activeGame.Result.Loser.User.ID, activeGame.Result.Winner.User.ID, activeGame.Result.Balance))
+		UpdateHistory()
 
 	} else {
 		s.ChannelMessageSend(activeGame.ChannelID, "There was either a tie or I fucked up somehow, try again suckers")
@@ -322,7 +383,7 @@ func generateTable() string {
 
 	fmt.Println("table", table)
 	var builder strings.Builder
-	builder.WriteString("```")
+	builder.WriteString("```markdown\n")
 	builder.WriteString(tableTitle)
 	fmt.Fprintf(&builder, "%s \n", generateTopOrBottom("┏", "┓"))
 	fmt.Fprintf(&builder, "%s \n", generateHeader())
@@ -370,7 +431,7 @@ func generateDivider() string {
 		if i == 0 {
 			b.WriteString("┣")
 		} else {
-			b.WriteString("│")
+			b.WriteString("┃")
 		}
 		for i := (c.Length - 1); i > 0; i-- {
 			b.WriteString("━")
