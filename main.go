@@ -399,6 +399,7 @@ func generateTable() string {
 	}
 	fmt.Fprintf(&builder, "%s", generateTopOrBottom("┗", "┛"))
 	builder.WriteString("```")
+	fmt.Println(builder.String())
 	return builder.String()
 }
 
